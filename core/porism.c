@@ -4,10 +4,7 @@
  * 原本是Python写的，但是后面转的C（至于为什么没用C++，e）
  * 我对C不熟悉，很多都是抄文档和抄AI的。
  * 
- * 编译：
- *   exe        gcc -Os -s msmini.c -o msmini.exe
- *   DLL        gcc -Os -s -shared -DMS_LIB msmini.c -o msmini.dll
- *   静态库     gcc -Os -c -DMS_LIB msmini.c -o msmini.o && ar rcs libmsmini.a msmini.o
+ * 编译：run.sh
  */
 
 
@@ -20,7 +17,7 @@
 #include <math.h>
 #include <ctype.h>
 
-#include "porism.h"   /* 统一 ABI 声明；DLL 构建时加 -DMS_DLL */
+#include "porism.h"   /* 统一 ABI 声明 */
 
 // //////////////////////////////////////////////////////////////////
 // 线程模型
@@ -41,70 +38,70 @@ typedef struct {
 #if defined(_WIN32)
 // Windows
 #include <windows.h>
-static SRWLOCK ms_lock = SRWLOCK_INIT;
-static INIT_ONCE ms_once = INIT_ONCE_STATIC_INIT;
-static DWORD ms_fls = FLS_OUT_OF_INDEXES;
-static CallCtx ms_fallback;
-static void NTAPI ms_free_ctx(PVOID p) { free(p); }
-static BOOL CALLBACK ms_init_fls(PINIT_ONCE o, PVOID p, PVOID *c) {
+static SRWLOCK porism_lock = SRWLOCK_INIT;
+static INIT_ONCE porism_once = INIT_ONCE_STATIC_INIT;
+static DWORD porism_fls = FLS_OUT_OF_INDEXES;
+static CallCtx porism_fallback;
+static void NTAPI porism_free_ctx(PVOID p) { free(p); }
+static BOOL CALLBACK porism_init_fls(PINIT_ONCE o, PVOID p, PVOID *c) {
     (void)o; (void)p; (void)c;
-    ms_fls = FlsAlloc(ms_free_ctx);
+    porism_fls = FlsAlloc(porism_free_ctx);
     return TRUE;
 }
-static CallCtx *ms_ctx(void) {
-    InitOnceExecuteOnce(&ms_once, ms_init_fls, 0, 0);
-    if (ms_fls == FLS_OUT_OF_INDEXES) return &ms_fallback;
-    CallCtx *c = (CallCtx *)FlsGetValue(ms_fls);
+static CallCtx *porism_ctx(void) {
+    InitOnceExecuteOnce(&porism_once, porism_init_fls, 0, 0);
+    if (porism_fls == FLS_OUT_OF_INDEXES) return &porism_fallback;
+    CallCtx *c = (CallCtx *)FlsGetValue(porism_fls);
     if (!c) {
         c = (CallCtx *)calloc(1, sizeof(CallCtx));
-        if (!c) return &ms_fallback;
-        FlsSetValue(ms_fls, c);
+        if (!c) return &porism_fallback;
+        FlsSetValue(porism_fls, c);
     }
     return c;
 }
-#define MS_LOCK()   AcquireSRWLockExclusive(&ms_lock)
-#define MS_UNLOCK() ReleaseSRWLockExclusive(&ms_lock)
+#define PORISM_LOCK()   AcquireSRWLockExclusive(&porism_lock)
+#define PORISM_UNLOCK() ReleaseSRWLockExclusive(&porism_lock)
 #elif defined(__unix__) || defined(__APPLE__)
 // Unix or MacOS
 #include <pthread.h>
-static pthread_mutex_t ms_lock = PTHREAD_MUTEX_INITIALIZER;
-static pthread_key_t ms_key;
-static pthread_once_t ms_once = PTHREAD_ONCE_INIT;
-static CallCtx ms_fallback;
-static void ms_free_ctx(void *p) { free(p); }
-static void ms_make_key(void) { pthread_key_create(&ms_key, ms_free_ctx); }
-static CallCtx *ms_ctx(void) {
-    pthread_once(&ms_once, ms_make_key);
-    CallCtx *c = (CallCtx *)pthread_getspecific(ms_key);
+static pthread_mutex_t porism_lock = PTHREAD_MUTEX_INITIALIZER;
+static pthread_key_t porism_key;
+static pthread_once_t porism_once = PTHREAD_ONCE_INIT;
+static CallCtx porism_fallback;
+static void porism_free_ctx(void *p) { free(p); }
+static void porism_make_key(void) { pthread_key_create(&porism_key, porism_free_ctx); }
+static CallCtx *porism_ctx(void) {
+    pthread_once(&porism_once, porism_make_key);
+    CallCtx *c = (CallCtx *)pthread_getspecific(porism_key);
     if (!c) {
         c = (CallCtx *)calloc(1, sizeof(CallCtx));
-        if (!c) return &ms_fallback;
-        pthread_setspecific(ms_key, c);
+        if (!c) return &porism_fallback;
+        pthread_setspecific(porism_key, c);
     }
     return c;
 }
-#define MS_LOCK()   pthread_mutex_lock(&ms_lock)
-#define MS_UNLOCK() pthread_mutex_unlock(&ms_lock)
+#define PORISM_LOCK()   pthread_mutex_lock(&porism_lock)
+#define PORISM_UNLOCK() pthread_mutex_unlock(&porism_lock)
 #else
 // Other
-static CallCtx ms_fallback;
-static CallCtx *ms_ctx(void) { return &ms_fallback; }
-#define MS_LOCK()   ((void)0)
-#define MS_UNLOCK() ((void)0)
+static CallCtx porism_fallback;
+static CallCtx *porism_ctx(void) { return &porism_fallback; }
+#define PORISM_LOCK()   ((void)0)
+#define PORISM_UNLOCK() ((void)0)
 #endif
 
-#define errbuf       (ms_ctx()->errbuf)
-#define err_line     (ms_ctx()->err_line)
-#define err_col      (ms_ctx()->err_col)
-#define outbuf       (ms_ctx()->outbuf)
-#define outlen       (ms_ctx()->outlen)
-#define outcap       (ms_ctx()->outcap)
-#define out_overflow (ms_ctx()->out_overflow)
-#define err_type     (ms_ctx()->err_type)
-#define json_mode    (ms_ctx()->json_mode)
-#define outputs      (ms_ctx()->outputs)
-#define noutputs     (ms_ctx()->noutputs)
-#define output_cap   (ms_ctx()->output_cap)
+#define errbuf       (porism_ctx()->errbuf)
+#define err_line     (porism_ctx()->err_line)
+#define err_col      (porism_ctx()->err_col)
+#define outbuf       (porism_ctx()->outbuf)
+#define outlen       (porism_ctx()->outlen)
+#define outcap       (porism_ctx()->outcap)
+#define out_overflow (porism_ctx()->out_overflow)
+#define err_type     (porism_ctx()->err_type)
+#define json_mode    (porism_ctx()->json_mode)
+#define outputs      (porism_ctx()->outputs)
+#define noutputs     (porism_ctx()->noutputs)
+#define output_cap   (porism_ctx()->output_cap)
 
 #define MAX_DEPTH 900
 #define MAX_NODE_DEPTH 1200
@@ -118,7 +115,7 @@ static CallCtx *ms_ctx(void) { return &ms_fallback; }
 // //////////////////////////////////////////////////////////////////
 // 错误信息(我不识English)
 // //////////////////////////////////////////////////////////////////
-#ifdef MS_ZH
+#ifdef PORISM_ZH
 #define E_NEED_EXPR   "此处需要表达式，实际得到 %s"
 #define E_EXPECT      "期望 %s%s，实际得到 %s"
 #define E_BAD_CHAR    "无法识别的字符 %s"
@@ -1252,11 +1249,11 @@ static int write_result_json(int is_error) {
 // //////////////////////////////////////////////////////////////////
 // 对外接口
 // //////////////////////////////////////////////////////////////////
-PORISM_API const char *ms_error(void) { return errbuf; }
-PORISM_API int ms_error_line(void) { return err_line; }
-PORISM_API int ms_error_col(void) { return err_col; }
-PORISM_API size_t ms_output_len(void) { return outlen; }
-PORISM_API int ms_truncated(void) { return out_overflow; }
+PORISM_API const char *porism_error(void) { return errbuf; }
+PORISM_API int porism_error_line(void) { return err_line; }
+PORISM_API int porism_error_col(void) { return err_col; }
+PORISM_API size_t porism_output_len(void) { return outlen; }
+PORISM_API int porism_truncated(void) { return out_overflow; }
 
 
 static void begin_call(char *out, size_t cap) {
@@ -1267,9 +1264,9 @@ static void begin_call(char *out, size_t cap) {
     err_line = err_col = 0;
 }
 
-PORISM_API int ms_run(const char *src, char *out, size_t cap) {
+PORISM_API int porism_run(const char *src, char *out, size_t cap) {
     int rc;
-    MS_LOCK();
+    PORISM_LOCK();
     if (!src) {
         begin_call(out, cap);
         snprintf(errbuf, sizeof(errbuf), "null source");
@@ -1279,17 +1276,17 @@ PORISM_API int ms_run(const char *src, char *out, size_t cap) {
         if (setjmp(errjmp)) rc = 1;
         else { run(src, 0); rc = out_overflow ? 2 : 0; }
     }
-    MS_UNLOCK();
+    PORISM_UNLOCK();
     return rc;
 }
 
-PORISM_API int ms_eval(const char *expr, const char **names, const double *vals,
+PORISM_API int porism_eval(const char *expr, const char **names, const double *vals,
                    int nvars, char *out, size_t cap) {
     int rc;
-    MS_LOCK();
+    PORISM_LOCK();
     if (!expr || nvars < 0 || (nvars > 0 && (!names || !vals)) || nvars > MAX_GVARS) {
         begin_call(out, cap);
-        snprintf(errbuf, sizeof(errbuf), "invalid arguments to ms_eval");
+        snprintf(errbuf, sizeof(errbuf), "invalid arguments to porism_eval");
         rc = 1;
     } else {
         begin_call(out, cap);
@@ -1306,15 +1303,15 @@ PORISM_API int ms_eval(const char *expr, const char **names, const double *vals,
             rc = out_overflow ? 2 : 0;
         }
     }
-    MS_UNLOCK();
+    PORISM_UNLOCK();
     return rc;
 }
 
-PORISM_API const char *ms_error_type(void) { return err_type; }
+PORISM_API const char *porism_error_type(void) { return err_type; }
 
-PORISM_API int ms_run_json(const char *src, const char *params_json, char *out, size_t cap) {
+PORISM_API int porism_run_json(const char *src, const char *params_json, char *out, size_t cap) {
     int rc;
-    MS_LOCK();
+    PORISM_LOCK();
     begin_call(out, cap);
     json_mode = 1;
     if (!src) {
@@ -1328,11 +1325,11 @@ PORISM_API int ms_run_json(const char *src, const char *params_json, char *out, 
         rc = write_result_json(0);
     }
     json_mode = 0;
-    MS_UNLOCK();
+    PORISM_UNLOCK();
     return rc;
 }
 
-#ifndef MS_LIB
+#ifndef PORISM_LIB
 static char *readfile(const char *path) {
     FILE *f = fopen(path, "rb");
     if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(2); }
@@ -1363,7 +1360,7 @@ int main(int argc, char **argv) {
     size_t cap = 1u << 20;
     char *buf = (char *)malloc(cap);
     if (!buf) { fprintf(stderr, "out of memory\n"); return 1; }
-    int rc = ms_run_json(src, params, buf, cap);
+    int rc = porism_run_json(src, params, buf, cap);
     if (buf[0]) {
         fputs(buf, stdout);
         if (buf[strlen(buf) - 1] != '\n') fputc('\n', stdout);

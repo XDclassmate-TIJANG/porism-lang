@@ -1,5 +1,5 @@
 /**
- * MathScript 求值内核的 C ABI
+ * Porism 求值内核的 C ABI
 */
 
 // 虽然但是，这个Header的注释真的好丑
@@ -13,7 +13,7 @@
 extern "C" {
 #endif
 
-// The version of MathScript.
+// The version of Porism.
 #define PORISM_VERSION "1.0.0"
 
 #if defined(_WIN32) && defined(PORISM_DLL)
@@ -25,7 +25,7 @@ extern "C" {
 #endif
 
 /**
- * 执行一段 MathScript 源码
+ * 执行一段 Porism 源码
  * @param src NUL 结尾的 UTF-8 源码
  * @param out 输出缓冲区；传 NULL 时结果直接打到 stdout
  * @param cap 缓冲区字节数
