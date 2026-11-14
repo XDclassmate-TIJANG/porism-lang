@@ -7,7 +7,7 @@
  * 编译：run.sh
  */
 
-
+/// TODO: 单个文件太多了，等我以后再拆吧。
 
 #include <stdio.h>
 #include <stdlib.h>
@@ -768,7 +768,7 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
         snprintf(tmp, sizeof(tmp), "%.*f", nd, x);
         return vnum(strtod(tmp, 0));
     }
-    if (!strcmp(name, "int")) {
+    if (!strcmp(name, "num")) {     // 把 int 改成了 num
         if (n != 1) goto arity;
         Val v = a[0];
         if (v.k == V_NUM) return vint(v.exact ? v.i : (__int128)(long long)v.n);
@@ -777,10 +777,10 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
             char *end;
             long long q = strtoll(v.s, &end, 10);
             while (*end && isspace((unsigned char)*end)) end++;
-            if (end == v.s || *end) fail(l, c, "%s", "int needs a number");
+            if (end == v.s || *end) fail(l, c, "%s", "num needs a number");
             return vint((__int128)q);
         }
-        fail(l, c, "%s", "int needs a number");
+        fail(l, c, "%s", "num needs a number");
     }
     if (!strcmp(name, "float")) {
         if (n != 1) goto arity;
@@ -1351,7 +1351,7 @@ int main(int argc, char **argv) {
         if (!code && !file) code = argv[i];
     }
     if (!code && !file) {
-        fprintf(stderr, "usage: porism <file>.ms -p '<flat JSON object>' | -f <file.ms> | <code>\n");
+        fprintf(stderr, "usage: porism -f <file.prsm> -p '<flat JSON object>' | -f <file.prsm> | <code>\n");
         return 2;
     }
     char *src;
