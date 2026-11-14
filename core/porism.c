@@ -1342,8 +1342,27 @@ static char *readfile(const char *path) {
 int main(int argc, char **argv) {
     const char *file = 0, *code = 0, *params = 0;
     for (int i = 1; i < argc; i++) {
+        /// TODO: 为version添加返回值。
+        // Version of Interpreter.
         if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-v")) {
             printf("Porism Interpreter v%s\n", PORISM_VERSION);
+            return 0;
+        }
+        // Help Information.
+        if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
+            printf("Porism Interpreter v%s\n\n", PORISM_VERSION);
+            printf("Usage:\n"
+                "  porism \"<code>\"                     Run inline Porism code.\n"
+                "  porism -f <file.prsm>               Run a .prsm source file.\n"
+                "  porism -f <file.prsm> -p '<json>'   Run a file with flat JSON params.\n"
+                "  porism -h | --help                  Show this help.\n"
+                "  porism -v | --version               Show version.\n"
+                "\n"
+                "Options:\n"
+                "  -f <file.prsm>     Source file to execute.\n"
+                "  -p '<json>'        Flat JSON object passed to the program (requires -f).\n"
+                "  -h, --help         Show this help and exit.\n"
+                "  -v, --version      Show version and exit.\n");
             return 0;
         }
         if (!strcmp(argv[i], "-p") && i + 1 < argc) { params = argv[++i]; continue; }
