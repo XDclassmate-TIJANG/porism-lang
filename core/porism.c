@@ -1436,6 +1436,7 @@ int main(int argc, char **argv) {
             printf("Porism Interpreter v%s\n\n", PORISM_VERSION);
             printf("Usage:\n"
                 "  porism \"<code>\"                     Run inline Porism code.\n"
+                "  porism \"<code>\" -p '<json>'         Run inline Porism code.\n"
                 "  porism -f <file.prsm>               Run a .prsm source file.\n"
                 "  porism -f <file.prsm> -p '<json>'   Run a file with flat JSON params.\n"
                 "  porism -h | --help                  Show this help.\n"
@@ -1443,7 +1444,7 @@ int main(int argc, char **argv) {
                 "\n"
                 "Options:\n"
                 "  -f <file.prsm>     Source file to execute.\n"
-                "  -p '<json>'        Flat JSON object passed to the program (requires -f).\n"
+                "  -p '<json>'        Flat JSON object passed to the program.\n"
                 "  -h, --help         Show this help and exit.\n"
                 "  -v, --version      Show version and exit.\n");
             return 0;
@@ -1453,7 +1454,8 @@ int main(int argc, char **argv) {
         if (!code && !file) code = argv[i];
     }
     if (!code && !file) {
-        fprintf(stderr, "usage: porism -f <file.prsm> -p '<flat JSON object>' | -f <file.prsm> | <code>\n");
+        // fprintf(stderr, "usage: porism -f <file.prsm> -p '<flat JSON object>' | -f <file.prsm> | <code>\n");
+        fprintf(stderr, "usage: porism <code> | -f <file.prsm> (-p '<flat JSON object>')\n");
         return 2;
     }
     char *src;
