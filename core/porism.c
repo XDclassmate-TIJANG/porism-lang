@@ -16,6 +16,8 @@
 #include <setjmp.h>
 #include <math.h>
 #include <ctype.h>
+#include <errno.h>
+#include <limits.h>
 
 #include "porism.h"   /* 统一 ABI 声明 */
 
@@ -29,9 +31,10 @@ typedef struct {
     char *outbuf;
     size_t outlen, outcap;
     int out_overflow;
-    int json_mode;                  /* 1 = 收集输出以构造结果对象 */
-    char **outputs;                 /* 每次 Output 一行（arena 内） */
+    int json_mode;
+    char **outputs;
     int noutputs, output_cap;
+    jmp_buf errjmp;
 } CallCtx;
 
 
@@ -197,7 +200,7 @@ static char *dupcstr(const char *s) { return dupstr(s, strlen(s)); }
 // //////////////////////////////////////////////////////////////////
 // 错误
 // //////////////////////////////////////////////////////////////////
-static jmp_buf errjmp;
+#define errjmp (porism_ctx()->errjmp)
 
 static void fail_t(const char *type, int line, int col, const char *fmt, ...) {
     va_list ap;
@@ -271,11 +274,27 @@ static double neednum(Val v, const char *op, int l, int c) {
     return v.n;
 }
 
+/* UTF-8码点计数，非法字节按单字节计 */
+static size_t utf8_count(const char *s) {
+    size_t n = 0;
+    const unsigned char *p = (const unsigned char *)s;
+    while (*p) {
+        n++;
+        if (*p < 0x80) p++;
+        else if ((*p & 0xE0) == 0xC0 && (p[1] & 0xC0) == 0x80) p += 2;
+        else if ((*p & 0xF0) == 0xE0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80) p += 3;
+        else if ((*p & 0xF8) == 0xF0 && (p[1] & 0xC0) == 0x80 && (p[2] & 0xC0) == 0x80 &&
+                 (p[3] & 0xC0) == 0x80) p += 4;
+        else p++;
+    }
+    return n;
+}
+
 // //////////////////////////////////////////////////////////////////
 // 词法
 // //////////////////////////////////////////////////////////////////
 enum { T_NUM = 0, T_STR = 1, T_IDENT = 2, T_OP = 3, T_NL = 4, T_EOF = 5,
-       T_PARAM = 6 };   /* 第 7 类词法单元：$KEY 参数引用 */
+       T_PARAM = 6 };   /* $KEY参数引用 */
 typedef struct { int t; double num; char *s; int line, col; int exact; __int128 i; } Tok;
 
 typedef struct {
@@ -283,9 +302,10 @@ typedef struct {
     Tok *toks; int nt, cap;
 } Lex;
 static Tok *gtoks;
+static char *gstrbuf;                 /* 所有字符串字面量共用的临时缓冲，避免按整份源码长度反复分配 */
 
 static void emit_tok(Lex *l, int t, double num, char *s, int line, int col) {
-    if (l->nt >= l->cap) return;
+    if (l->nt >= l->cap) fail_t("kernel", line, col, "too many tokens");
     Tok *k = &l->toks[l->nt++];
     memset(k, 0, sizeof(*k));
     k->t = t; k->num = num; k->s = s; k->line = line; k->col = col;
@@ -324,9 +344,12 @@ static Lex lex(const char *src) {
     l.src = src; l.n = strlen(src); l.line = 1; l.col = 1;
     l.cap = (int)l.n + 2;
     if (gtoks) { free(gtoks); gtoks = 0; }
+    if (gstrbuf) { free(gstrbuf); gstrbuf = 0; }
     l.toks = (Tok *)calloc((size_t)l.cap, sizeof(Tok));
     gtoks = l.toks;
     if (!l.toks) fail_t("kernel", 0, 0, "out of memory");
+    gstrbuf = (char *)malloc(l.n + 2);
+    if (!gstrbuf) fail_t("kernel", 0, 0, "out of memory");
     while (l.i < l.n) {
         int ch = peekc(&l, 0), line = l.line, col = l.col;
         if (ch == ' ' || ch == '\t' || ch == '\r') { adv(&l); continue; }
@@ -347,7 +370,7 @@ static Lex lex(const char *src) {
             continue;
         }
         if (ch == '$') {
-            adv(&l);                       /* '$' */
+            adv(&l);                       /* $ */
             size_t st = l.i;
             while (peekc(&l, 0) &&
                    (isalnum((unsigned char)peekc(&l, 0)) || peekc(&l, 0) == '_')) adv(&l);
@@ -364,7 +387,7 @@ static Lex lex(const char *src) {
         }
         if (ch == '\'' || ch == '"') {
             int q = adv(&l);
-            char *buf = (char *)mem(l.n + 2);
+            char *buf = gstrbuf;      /* 复用，不占 arena */
             size_t m = 0;
             int closed = 0;
             while (peekc(&l, 0)) {
@@ -416,6 +439,7 @@ static Lex lex(const char *src) {
         }
     }
     emit_tok(&l, T_EOF, 0, 0, l.line, l.col);
+    free(gstrbuf); gstrbuf = 0;
     return l;
 }
 
@@ -488,15 +512,18 @@ static Node *parse_primary(P *p) {
     if (t->t == T_IDENT) {
         char *name = t->s; int l = t->line, c = t->col;
         advt(p);
+        /* 必须先拦 Output，否则 Output(1) 会被伪装成普通函数调用 */
+        if (!strcmp(name, "Output"))
+            fail(l, c, "Output is a statement, not an expression");
         if (at(p, "(")) {
             advt(p);
             Node *n = node(N_CALL, l, c);
             n->name = name;
-            n->args = (Node **)mem(sizeof(Node *) * 64);
+            n->args = (Node **)mem(sizeof(Node *) * MAX_ARGS);
             n->nargs = 0;
             if (!at(p, ")")) {
                 for (;;) {
-                    if (n->nargs >= 64) fail(l, c, "too many arguments");
+                    if (n->nargs >= MAX_ARGS) fail(l, c, "too many arguments");
                     n->args[n->nargs++] = parse_expr(p);
                     if (!at(p, ",")) break;
                     advt(p);
@@ -504,9 +531,6 @@ static Node *parse_primary(P *p) {
             }
             expect(p, ")", " to close argument list");
             return n;
-        }
-        if (!strcmp(name, "Output")) {
-            fail(l, c, "Output is a statement, not an expression");
         }
         Node *n = node(N_VAR, l, c);
         n->name = name;
@@ -645,10 +669,11 @@ static Node *parse_statement(P *p) {
         int l = first->line, c = first->col;
         advt(p); advt(p);
         Node *n = node(N_OUTPUT, l, c);
-        n->args = (Node **)mem(sizeof(Node *) * 64);
+        n->args = (Node **)mem(sizeof(Node *) * MAX_ARGS);
         n->nargs = 0;
         if (!at(p, ")")) {
             for (;;) {
+                if (n->nargs >= MAX_ARGS) fail(l, c, "too many arguments");
                 n->args[n->nargs++] = parse_expr(p);
                 if (!at(p, ",")) break;
                 advt(p);
@@ -660,7 +685,11 @@ static Node *parse_statement(P *p) {
     if (first->t == T_IDENT && pk(p,1)->t == T_OP &&
         pk(p,1)->s && !strcmp(pk(p,1)->s, "=")) {
         char *name = first->s; int l = first->line, c = first->col;
-        if (!strcmp(name, "Output")) fail(l, c, E_RESERVED, name);
+        /* 常量不可覆盖：原来 pi = 3 / true = 0 会污染全局语义 */
+        if (!strcmp(name, "Output") || !strcmp(name, "true") ||
+            !strcmp(name, "false") || !strcmp(name, "null") ||
+            !strcmp(name, "pi") || !strcmp(name, "e"))
+            fail(l, c, E_RESERVED, name);
         advt(p); advt(p);
         Node *n = node(N_ASSIGN, l, c);
         n->name = name; n->a = parse_expr(p);
@@ -754,28 +783,47 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
     if (!strcmp(name, "round")) {
         if (n < 1 || n > 2) goto arity;
         double x = neednum(a[0], "round", l, c);
-        int nd = n == 2 ? (int)neednum(a[1], "round", l, c) : 0;
-        /* Python: round() 用银行家舍入（ties-to-even），且带 ndigits 时
-           走十进制正确舍入，不能用 floor(x*p+0.5)/p 这种小学写法。 */
-        if (nd == 0) {
-            double f = floor(x), frac = x - f;
-            double r = frac > 0.5 ? f + 1 : frac < 0.5 ? f
-                     : (fmod(f, 2.0) == 0.0 ? f : f + 1);
-            return vint((__int128)r);
+        double ndd = n == 2 ? neednum(a[1], "round", l, c) : 0;
+        if (ndd != ndd || fabs(ndd) > 100000.0)
+            fail(l, c, "%s", "round: ndigits out of range");
+        int nd = (int)ndd;
+        double f, frac, r;
+        if (nd <= 0) {
+            double p = pow(10.0, (double)(-nd));
+            if (!isfinite(p)) return vnum(0.0);
+            double q = x / p;
+            if (!isfinite(q)) return vnum(x);
+            f = floor(q); frac = q - f;
+            r = frac > 0.5 ? f + 1 : frac < 0.5 ? f
+              : (fmod(f, 2.0) == 0.0 ? f : f + 1);
+            double res = r * p;
+            if (!isfinite(res) || fabs(res) >= (double)I128_SAFE) return vnum(res);
+            return vint((__int128)res);
         }
-        if (nd < -20 || nd > 20) return vnum(x);
-        char tmp[128];
+        if (nd > 600) return vnum(x);
+        char tmp[1024];                     // 最大1.8e308: 309位整数+600 位小数
         snprintf(tmp, sizeof(tmp), "%.*f", nd, x);
-        return vnum(strtod(tmp, 0));
+        double res = strtod(tmp, 0);
+        if (isfinite(res) && fabs(res) < (double)I128_SAFE && floor(res) == res)
+            return vint((__int128)res);
+        return vnum(res);
     }
     if (!strcmp(name, "num")) {     // 把 int 改成了 num
         if (n != 1) goto arity;
         Val v = a[0];
-        if (v.k == V_NUM) return vint(v.exact ? v.i : (__int128)(long long)v.n);
+        if (v.k == V_NUM) {
+            if (v.exact) return vint(v.i);
+            double x = v.n;
+            if (!isfinite(x) || fabs(x) >= 9.22e18)    // LLONG_MAX 附近不再安全
+                fail(l, c, "%s", "num needs a number in 64-bit range");
+            return vint((__int128)(long long)x);
+        }
         if (v.k == V_BOOL) return vint(v.n ? 1 : 0);
         if (v.k == V_STR) {
             char *end;
+            errno = 0;
             long long q = strtoll(v.s, &end, 10);
+            if (errno == ERANGE) fail(l, c, "%s", "num needs a number in 64-bit range");
             while (*end && isspace((unsigned char)*end)) end++;
             if (end == v.s || *end) fail(l, c, "%s", "num needs a number");
             return vint((__int128)q);
@@ -798,7 +846,7 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
     if (!strcmp(name, "str"))   { if (n != 1) goto arity; return vstr(fmtval(a[0])); }
     if (!strcmp(name, "len"))   { if (n != 1) goto arity;
         if (a[0].k != V_STR) fail(l, c, "len needs a string");
-        return vnum((double)strlen(a[0].s)); }
+        return vint((__int128)utf8_count(a[0].s)); }
     if (!strcmp(name, "upper") || !strcmp(name, "lower")) {
         if (n != 1) goto arity;
         char *s = fmtval(a[0]);
@@ -844,7 +892,7 @@ static Val eval_call(Node *e, Bind *env, int depth) {
     return builtin(e->name, a, e->nargs, e->line, e->col);
 }
 
-/* 任意精度 int 运算 */
+/* 有界精确整数运算 */
 static int exact_arith(const char *op, Val x, Val y, Val *out, int l, int c) {
     if (x.k != V_NUM || y.k != V_NUM || !x.exact || !y.exact) return 0;
     if (!strcmp(op, "/")) return 0;              /* Python: int / int -> float */
@@ -959,8 +1007,9 @@ static Val eval(Node *e, Bind *env, int depth) {
                     fail_t("kernel", e->line, e->col, "%s", "string repeat result too large");
                 long long k = (long long)d;
                 char *buf = (char *)mem(sl * (size_t)k + 1);
-                buf[0] = 0;
-                for (long long i = 0; i < k; i++) strcat(buf, s.s);
+                char *dst = buf;
+                for (long long i = 0; i < k; i++) { memcpy(dst, s.s, sl); dst += sl; }
+                *dst = 0;
                 r = vstr(buf); break;
             }
             if (exact_arith(op, x, y, &r, e->line, e->col)) break;
@@ -1098,14 +1147,32 @@ static char *jstring(const char **p) {
                         cp = cp * 16 + (unsigned int)h;
                     }
                     (*p) += 4;
-                    /* BMP 直接编码；代理对按实现自由度折叠为 '?' */
+                    /* 高代理+紧跟的低代理合并成一个码点，孤立代理退化为 "?" */
+                    if (cp >= 0xD800 && cp <= 0xDBFF &&
+                        (*p)[0] == '\\' && (*p)[1] == 'u') {
+                        unsigned int lo = 0; int ok = 1;
+                        for (int j = 0; j < 4; j++) {
+                            int h = hexval((unsigned char)(*p)[2 + j]);
+                            if (h < 0) { ok = 0; break; }
+                            lo = lo * 16 + (unsigned int)h;
+                        }
+                        if (ok && lo >= 0xDC00 && lo <= 0xDFFF) {
+                            cp = 0x10000u + ((cp - 0xD800u) << 10) + (lo - 0xDC00u);
+                            *p += 6;
+                        }
+                    }
                     if (cp >= 0xD800 && cp <= 0xDFFF) buf[m++] = '?';
                     else if (cp < 0x80) buf[m++] = (char)cp;
                     else if (cp < 0x800) {
                         buf[m++] = (char)(0xC0 | (cp >> 6));
                         buf[m++] = (char)(0x80 | (cp & 0x3F));
-                    } else {
+                    } else if (cp < 0x10000) {
                         buf[m++] = (char)(0xE0 | (cp >> 12));
+                        buf[m++] = (char)(0x80 | ((cp >> 6) & 0x3F));
+                        buf[m++] = (char)(0x80 | (cp & 0x3F));
+                    } else {
+                        buf[m++] = (char)(0xF0 | (cp >> 18));
+                        buf[m++] = (char)(0x80 | ((cp >> 12) & 0x3F));
                         buf[m++] = (char)(0x80 | ((cp >> 6) & 0x3F));
                         buf[m++] = (char)(0x80 | (cp & 0x3F));
                     }
@@ -1207,7 +1274,7 @@ static int write_result_json(int is_error) {
         snprintf(head, sizeof(head),
                  "{\"status\":\"error\",\"errors\":[{\"id\":1,\"type\":\"%s\",\"message\":",
                  err_type);
-        total = strlen(head) + 2 + json_esc_len(errbuf);   /* 引号 + 内容 */
+        total = strlen(head) + 2 + json_esc_len(errbuf);   /* 引号+内容 */
         snprintf(num, sizeof(num), ",\"line\":%d,\"col\":%d}],\"outputs\":[",
                  err_line, err_col);
         total += strlen(num);
@@ -1219,7 +1286,18 @@ static int write_result_json(int is_error) {
         total += 2 + json_esc_len(outputs[i]);
     }
     total += 2;                              /* ]} */
-    char *b = (char *)mem(total + 1);
+    /* 改用堆，并在所有返回点释放。 */
+    char *b = (char *)malloc(total + 1);
+    if (!b) {                                /* 堆也失败：写最小结果，绝不 longjmp */
+        static const char oom[] =
+            "{\"status\":\"error\",\"errors\":[{\"id\":1,\"type\":\"kernel\","
+            "\"message\":\"out of memory\",\"line\":0,\"col\":0}],\"outputs\":[]}";
+        size_t ol = strlen(oom);
+        if (!outbuf) { fputs(oom, stdout); fputc('\n', stdout); }
+        else if (outbuf && outcap > ol) { memcpy(outbuf, oom, ol + 1); outlen = ol; }
+        else { out_overflow = 1; if (outcap) outbuf[0] = 0; }
+        return 1;
+    }
     char *d = b;
     if (is_error) d = jappend(d, head);
     else d = jappend(d, "{\"status\":\"ok\",\"errors\":null,\"outputs\":[");
@@ -1233,17 +1311,20 @@ static int write_result_json(int is_error) {
     }
     *d++ = ']'; *d++ = '}'; *d = 0;
     size_t len = (size_t)(d - b);
-    if (!outbuf) { fputs(b, stdout); fputc('\n', stdout); return is_error ? 1 : 0; }
+    int rc = is_error ? 1 : 0;
+    if (!outbuf) { fputs(b, stdout); fputc('\n', stdout); free(b); return rc; }
     if (len + 1 > outcap) {
         out_overflow = 1;
         snprintf(err_type, sizeof(err_type), "kernel");
         snprintf(errbuf, sizeof(errbuf), "result object buffer too small");
         if (outcap) outbuf[0] = 0;
+        free(b);
         return 2;
     }
     memcpy(outbuf, b, len + 1);
     outlen = len;
-    return is_error ? 1 : 0;
+    free(b);
+    return rc;
 }
 
 // //////////////////////////////////////////////////////////////////

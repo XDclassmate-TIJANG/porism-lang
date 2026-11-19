@@ -67,7 +67,7 @@ usage() {
   也可用传统写法：PORISM_ARCHIVE=7z ./run.sh release
 
 可用变量:
-  PORISM_VERSION  版本号，默认 1.0.0
+  PORISM_VERSION  版本号，默认 1.0.0（同时写进二进制，--version 与包名一致）
   PORISM_SOVER    SONAME 主版本，默认 1
   PORISM_WERROR   1 = 追加 -Werror
   PORISM_SRC      porism.c 路径
@@ -196,6 +196,8 @@ setup_flags() {
     CFLAGS+=(-O0 -g); LINK_FLAGS=(); CFG_SUFFIX="-debug"
   fi
   if [[ "$WERROR" == 1 ]]; then CFLAGS+=(-Werror); fi
+  # 让 --version 与包版本号一致（porism.h 有 #ifndef 守卫，可安全覆盖）
+  CFLAGS+=("-DPORISM_VERSION=\"$VERSION\"")
 
   case "$PLATFORM" in
     windows)
@@ -256,22 +258,24 @@ do_build() {
   "$CC" "${CFLAGS[@]}" "$src" -o "$OUT/bin/$EXE" "${LIBS[@]}"
 
   if [[ "$PLATFORM" == windows ]]; then
-    "$CC" "${CFLAGS[@]}" -shared -DMS_LIB -DMS_DLL "$src" \
+    # PORISM_LIB 去掉 main；PORISM_DLL 让导出表只有 PORISM_API 标记的函数。
+    # 旧版写的 -DMS_LIB/-DMS_DLL 与源码宏名不符，导致静态库和 DLL 都带 main。
+    "$CC" "${CFLAGS[@]}" -shared -DPORISM_LIB -DPORISM_DLL "$src" \
       -o "$OUT/bin/$DLL" "${LIBS[@]}" \
       -Wl,--out-implib,"$OUT/lib/libporism.dll.a" \
-      -Wl,--output-def,"$OUT/lib/porism.def"
+      -Wl,--output-def,"$OUT/lib/porism.def" -Wl,--no-undefined
     if ! build_msvc_implib; then
       cp -a "$OUT/lib/libporism.dll.a" "$OUT/lib/porism.lib"
       warn "porism.lib 为 .dll.a 副本（MSVC 多库链接可能异常）；建议提供 llvm-dlltool 或 lib.exe"
     fi
   else
     # 只产实体 .so；软链延后到暂存目录建立（WSL 的 /mnt/* 默认禁止 ln -s）
-    "$CC" "${CFLAGS[@]}" -shared -DMS_LIB "$src" \
+    "$CC" "${CFLAGS[@]}" -shared -DPORISM_LIB "$src" \
       -o "$OUT/lib/$DLL" "${LIBS[@]}" \
       "-Wl,-soname,libporism.so.$SOVER" -Wl,--no-undefined
   fi
 
-  "$CC" "${CFLAGS[@]}" -c -DMS_LIB "$src" -o "$obj"
+  "$CC" "${CFLAGS[@]}" -c -DPORISM_LIB "$src" -o "$obj"
   "$AR" rcs "$OUT/lib/$STATIC" "$obj"
   rm -rf -- "$OUT/.obj"
 }
@@ -426,6 +430,11 @@ do_tools() {
 do_clean() {
   local d
   d="$(cfg PORISM_DIST "$SCRIPT_DIR/dist")"
+  # 防止误传盘根 / 家目录 / 脚本根目录导致不可逆删除
+  case "$d" in
+    /|[A-Za-z]:/|/c|/c/|/mnt/?|/mnt/?/|"$HOME"|"$SCRIPT_DIR")
+      die "拒绝清理危险目录：$d" ;;
+  esac
   if [[ -d "$d" ]]; then
     rm -rf -- "$d"
     log "clean" "已删除 $d"
