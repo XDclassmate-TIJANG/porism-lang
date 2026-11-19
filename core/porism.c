@@ -1410,6 +1410,10 @@ PORISM_API int porism_run_json(const char *src, const char *params_json, char *o
     return rc;
 }
 
+const char porism_abi_version(void) {
+    return PORISM_ABI_VERSION;
+}
+
 #ifndef PORISM_LIB
 static char *readfile(const char *path) {
     FILE *f = fopen(path, "rb");

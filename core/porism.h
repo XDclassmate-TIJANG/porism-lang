@@ -7,21 +7,45 @@
 #ifndef PORISM_H
 #define PORISM_H
 #include <stddef.h>
+#include <stdint.h>
 #ifdef __cplusplus
 extern "C" {
 #endif
 
 // The version of Porism.
 #ifndef PORISM_VERSION
-#define PORISM_VERSION "1.0.0"       /* 可由构建脚本 -DPORISM_VERSION=... 覆盖 */
+    /// Porism 编译器版本
+#   define PORISM_VERSION "1.0.0"       /* 可由构建脚本 -DPORISM_VERSION=... 覆盖 */
 #endif
-#if defined(_WIN32) && defined(PORISM_DLL)
-#  define PORISM_API __declspec(dllexport)
-#elif defined(_WIN32) && defined(PORISM_DLL_USE)
-#  define PORISM_API __declspec(dllimport)
+
+#if defined(_WIN32)
+#  if defined(PORISM_DLL) || defined(PORISM_BUILD)
+#    define PORISM_API __declspec(dllexport)
+#  elif defined(PORISM_DLL_USE)
+#    define PORISM_API __declspec(dllimport)
+#  else
+#    define PORISM_API
+#  endif
+#  define PORISM_CALL __cdecl
 #else
-#  define PORISM_API
+#  if defined(__GNUC__) || defined(__clang__)
+#    define PORISM_API __attribute__((visibility("default")))
+#  else
+#    define PORISM_API
+#  endif
+#  define PORISM_CALL
 #endif
+
+/// ABI版本
+#define PORISM_ABI_VERSION "1.0.0"
+
+/// 返回ABI的版本号
+PORISM_API const char *PORISM_CALL porism_abi_version(void);
+
+// 返回码
+#define PORISM_OK           0
+#define PORISM_ERR_LANG     1
+#define PORISM_ERR_TRUNC    2
 
 /**
 * 执行一段 Porism 源码
@@ -31,7 +55,7 @@ extern "C" {
 * @return `0`: 成功；`1`: 语言错误；`2`: 输出被截断。
 * 每次调用都会重置，不保留跨调用状态。
 */
-PORISM_API int porism_run(const char *src, char *out, size_t cap);
+PORISM_API int PORISM_CALL porism_run(const char *src, char *out, size_t cap);
 
 /**
 * 求值单个表达式，并注入宿主变量
@@ -43,8 +67,7 @@ PORISM_API int porism_run(const char *src, char *out, size_t cap);
 * @param cap   out 的字节数
 * @return  返回值与 porism_run 相同。变量以 double 注入，报错行列对应 expr 本身。
 */
-
-PORISM_API int porism_eval(const char *expr, const char **names, const double *vals,
+PORISM_API int PORISM_CALL porism_eval(const char *expr, const char **names, const double *vals,
                            int nvars, char *out, size_t cap);
 
 /**
@@ -66,16 +89,16 @@ PORISM_API int porism_eval(const char *expr, const char **names, const double *v
 *
 * @return  0 = status ok  1 = status error  2 = 结果缓冲区不足
 */
-PORISM_API int porism_run_json(const char *src, const char *params_json,
+PORISM_API int PORISM_CALL porism_run_json(const char *src, const char *params_json,
                                char *out, size_t cap);
 
 
-PORISM_API const char   *porism_error(void);                /* 错误信息，仅在返回 1 后有效          */
-PORISM_API const char   *porism_error_type(void);           /* code / kernel / parameter / unknown  */
-PORISM_API int          porism_error_line(void);            /* 1-based 行号，0 表示无位置           */
-PORISM_API int          porism_error_col(void);             /* 1-based 列号                         */
-PORISM_API size_t       porism_output_len(void);            /* 实际写入的字节数（不含结尾 NUL）     */
-PORISM_API int          porism_truncated(void);             /* 结果是否被截断                       */
+PORISM_API const char *PORISM_CALL  porism_error(void);                /* 错误信息，仅在返回 1 后有效          */
+PORISM_API const char *PORISM_CALL  porism_error_type(void);           /* code / kernel / parameter / unknown  */
+PORISM_API int        PORISM_CALL   porism_error_line(void);            /* 1-based 行号，0 表示无位置           */
+PORISM_API int        PORISM_CALL   porism_error_col(void);             /* 1-based 列号                         */
+PORISM_API size_t     PORISM_CALL   porism_output_len(void);            /* 实际写入的字节数（不含结尾 NUL）     */
+PORISM_API int        PORISM_CALL   porism_truncated(void);             /* 结果是否被截断                       */
 
 #ifdef __cplusplus
 }
