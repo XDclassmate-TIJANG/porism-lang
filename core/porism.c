@@ -7,8 +7,6 @@
  * 编译：run.sh
  */
 
-/// TODO: 单个文件太多了，等我以后再拆吧。
-
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -108,6 +106,7 @@ static CallCtx *porism_ctx(void) { return &porism_fallback; }
 
 #define MAX_DEPTH 900
 #define MAX_NODE_DEPTH 1200
+#define MAX_PARSE_DEPTH 500       /* 解析期递归深度：MAX_NODE_DEPTH 只保护 eval */
 #define MAX_GVARS 512
 #define MAX_GFUNCS 256
 #define MAX_PARAMS 24
@@ -125,13 +124,17 @@ static CallCtx *porism_ctx(void) { return &porism_fallback; }
 #define E_BAD_ESC     "未知转义序列 \\%c"
 #define E_STR_NL      "字符串不能跨行"
 #define E_STR_OPEN    "字符串未闭合"
+#define E_STR_NUL     "字符串字面量不支持 \\0（内嵌 NUL）"
 #define E_UNDEF_VAR   "未定义的变量 %s"
 #define E_UNDEF_FN    "未定义的函数 %s"
 #define E_ARITY       "函数 %s 需要 %d 个参数，实际传入 %d 个"
+#define E_ARITY_RANGE "函数 %s 需要 1~%d 个参数，实际传入 %d 个"
+#define E_ARITY_MIN   "函数 %s 至少需要 %d 个参数，实际传入 %d 个"
 #define E_NEED_NUM    "运算符 %s 需要数字"
 #define E_DIV0        "除以零"
 #define E_DEEP        "调用/递归层级过深（>%d）"
 #define E_NODE_DEEP   "表达式层级过深（>%d）"
+#define E_PARSE_DEEP  "表达式嵌套层级过深（>%d）"
 #define E_TRAILING    "语句结束后出现多余内容 %s"
 #define E_DUP_PARAM   "函数 %s 的参数名重复"
 #define E_RESERVED    "%s 是保留字，不能用作函数名或变量名"
@@ -144,13 +147,17 @@ static CallCtx *porism_ctx(void) { return &porism_fallback; }
 #define E_BAD_ESC     "unknown escape \\%c"
 #define E_STR_NL      "string cannot span lines"
 #define E_STR_OPEN    "unterminated string"
+#define E_STR_NUL     "embedded NUL (\\0) is not supported in string literals"
 #define E_UNDEF_VAR   "undefined variable %s"
 #define E_UNDEF_FN    "undefined function %s"
 #define E_ARITY       "function %s needs %d args, got %d"
+#define E_ARITY_RANGE "function %s needs 1-%d args, got %d"
+#define E_ARITY_MIN   "function %s needs at least %d args, got %d"
 #define E_NEED_NUM    "operator %s needs numbers"
 #define E_DIV0        "division by zero"
 #define E_DEEP        "call depth exceeded (>%d)"
 #define E_NODE_DEEP   "expression depth exceeded (>%d)"
+#define E_PARSE_DEEP  "expression nesting too deep (>%d)"
 #define E_TRAILING    "trailing content after statement: %s"
 #define E_DUP_PARAM   "duplicate parameter in function %s"
 #define E_RESERVED    "%s is reserved"
@@ -342,6 +349,7 @@ static Lex lex(const char *src) {
     Lex l;
     memset(&l, 0, sizeof(l));
     l.src = src; l.n = strlen(src); l.line = 1; l.col = 1;
+    if (l.n > (size_t)INT_MAX - 2) fail_t("kernel", 0, 0, "source too large");
     l.cap = (int)l.n + 2;
     if (gtoks) { free(gtoks); gtoks = 0; }
     if (gstrbuf) { free(gstrbuf); gstrbuf = 0; }
@@ -399,7 +407,7 @@ static Lex lex(const char *src) {
                         case 'n': buf[m++] = '\n'; break;
                         case 't': buf[m++] = '\t'; break;
                         case 'r': buf[m++] = '\r'; break;
-                        case '0': buf[m++] = '\0'; break;
+                        case '0': fail(line, col, "%s", E_STR_NUL); break;
                         case '\\': case '"': case '\'': buf[m++] = (char)e; break;
                         default:
                             fail(line, col, E_BAD_ESC, e);
@@ -494,8 +502,20 @@ static Tok *expect(P *p, const char *s, const char *hint) {
 
 static Node *parse_expr(P *p);
 static Node *parse_unary(P *p);
+static Node *parse_primary_impl(P *p);
+static Node *parse_unary_impl(P *p);
 
-static Node *parse_primary(P *p) {
+/* MAX_NODE_DEPTH 只在 eval 里生效；深层括号在 parser 就会爆栈，必须在这里拦住。
+   只在真正产生递归栈帧的两个入口计数，配对进出，扁平的左结合循环不会误报。 */
+static int parse_depth;
+static void pdepth_enter(int l, int c) {
+    if (++parse_depth > MAX_PARSE_DEPTH) {
+        parse_depth--;
+        fail(l, c, E_PARSE_DEEP, MAX_PARSE_DEPTH);
+    }
+}
+
+static Node *parse_primary_impl(P *p) {
     Tok *t = pk(p, 0);
     if (t->t == T_NUM) {
         Node *n = node(N_LIT, t->line, t->col);
@@ -545,6 +565,13 @@ static Node *parse_primary(P *p) {
     fail(t->line, t->col, E_NEED_EXPR, got(p));
     return 0;
 }
+static Node *parse_primary(P *p) {
+    Tok *t = pk(p, 0);
+    pdepth_enter(t->line, t->col);
+    Node *n = parse_primary_impl(p);
+    parse_depth--;
+    return n;
+}
 static Node *parse_power(P *p) {
     Node *base = parse_primary(p);
     if (at(p, "**")) {
@@ -555,7 +582,7 @@ static Node *parse_power(P *p) {
     }
     return base;
 }
-static Node *parse_unary(P *p) {
+static Node *parse_unary_impl(P *p) {
     if (at(p, "+") || at(p, "-") || at(p, "!")) {
         Tok *t = advt(p);
         Node *n = node(N_UNARY, t->line, t->col);
@@ -563,6 +590,13 @@ static Node *parse_unary(P *p) {
         return n;
     }
     return parse_power(p);
+}
+static Node *parse_unary(P *p) {
+    Tok *t = pk(p, 0);
+    pdepth_enter(t->line, t->col);
+    Node *n = parse_unary_impl(p);
+    parse_depth--;
+    return n;
 }
 static Node *left_assoc(P *p, Node *(*sub)(P *), const char *ops[]) {
     Node *n = sub(p);
@@ -757,22 +791,22 @@ static Val eval(Node *e, Bind *env, int depth);
 
 static Val builtin(const char *name, Val *a, int n, int l, int c) {
     char b[128];
-    if (!strcmp(name, "abs"))   { if (n != 1) goto arity; return vnum(fabs(neednum(a[0], "abs", l, c))); }
+    if (!strcmp(name, "abs"))   { if (n != 1) fail(l, c, E_ARITY, name, 1, n); return vnum(fabs(neednum(a[0], "abs", l, c))); }
     if (!strcmp(name, "sqrt")) {
-        if (n != 1) goto arity;
+        if (n != 1) fail(l, c, E_ARITY, name, 1, n);
         double x = neednum(a[0], "sqrt", l, c);
         if (x < 0) fail(l, c, "%s", "sqrt needs a non-negative number");
         return vnum(sqrt(x));
     }
     if (!strcmp(name, "pow"))   {
-        if (n != 2) goto arity;
+        if (n != 2) fail(l, c, E_ARITY, name, 2, n);
         double x = neednum(a[0],"pow",l,c), y = neednum(a[1],"pow",l,c);
         double r = pow(x, y);
         if (r != r) fail(l, c, "%s", "math domain error");
         return vnum(r);
     }
     if (!strcmp(name, "min") || !strcmp(name, "max")) {
-        if (n < 1) goto arity;
+        if (n < 1) fail(l, c, E_ARITY_MIN, name, 1, n);
         double r = neednum(a[0], name, l, c);
         for (int i = 1; i < n; i++) {
             double x = neednum(a[i], name, l, c);
@@ -781,7 +815,7 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
         return vnum(r);
     }
     if (!strcmp(name, "round")) {
-        if (n < 1 || n > 2) goto arity;
+        if (n < 1 || n > 2) fail(l, c, E_ARITY_RANGE, name, 2, n);
         double x = neednum(a[0], "round", l, c);
         double ndd = n == 2 ? neednum(a[1], "round", l, c) : 0;
         if (ndd != ndd || fabs(ndd) > 100000.0)
@@ -809,7 +843,7 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
         return vnum(res);
     }
     if (!strcmp(name, "num")) {     // 把 int 改成了 num
-        if (n != 1) goto arity;
+        if (n != 1) fail(l, c, E_ARITY, name, 1, n);
         Val v = a[0];
         if (v.k == V_NUM) {
             if (v.exact) return vint(v.i);
@@ -831,7 +865,7 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
         fail(l, c, "%s", "num needs a number");
     }
     if (!strcmp(name, "float")) {
-        if (n != 1) goto arity;
+        if (n != 1) fail(l, c, E_ARITY, name, 1, n);
         Val v = a[0];
         if (v.k == V_NUM || v.k == V_BOOL) return vnum(v.n);
         if (v.k == V_STR) {
@@ -843,12 +877,12 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
         }
         fail(l, c, "%s", "float needs a number");
     }
-    if (!strcmp(name, "str"))   { if (n != 1) goto arity; return vstr(fmtval(a[0])); }
-    if (!strcmp(name, "len"))   { if (n != 1) goto arity;
+    if (!strcmp(name, "str"))   { if (n != 1) fail(l, c, E_ARITY, name, 1, n); return vstr(fmtval(a[0])); }
+    if (!strcmp(name, "len"))   { if (n != 1) fail(l, c, E_ARITY, name, 1, n);
         if (a[0].k != V_STR) fail(l, c, "len needs a string");
         return vint((__int128)utf8_count(a[0].s)); }
     if (!strcmp(name, "upper") || !strcmp(name, "lower")) {
-        if (n != 1) goto arity;
+        if (n != 1) fail(l, c, E_ARITY, name, 1, n);
         char *s = fmtval(a[0]);
         char *r = dupstr(s, strlen(s));
         for (char *q = r; *q; q++) {
@@ -859,9 +893,6 @@ static Val builtin(const char *name, Val *a, int n, int l, int c) {
     }
     snprintf(b, sizeof(b), "'%s'", name);
     fail(l, c, E_UNDEF_FN, b);
-    return vnull();
-arity:
-    fail(l, c, E_ARITY, name, n == 0 ? 1 : n, n);
     return vnull();
 }
 
@@ -1059,7 +1090,7 @@ static void emit(const char *s) {
 /* 重置 arena/变量表/函数表，注入宿主变量 */
 static void prepare(size_t srclen, const char **names, const double *vals, int nvars) {
     arena_init(srclen + 256);
-    ngvars = ngfuncs = node_depth = 0;
+    ngvars = ngfuncs = node_depth = parse_depth = 0;
     params_reset();
     for (int i = 0; i < nvars; i++) setglobal(names[i], vnum(vals[i]));
 }
@@ -1350,6 +1381,7 @@ PORISM_API int porism_run(const char *src, char *out, size_t cap) {
     PORISM_LOCK();
     if (!src) {
         begin_call(out, cap);
+        snprintf(err_type, sizeof(err_type), "kernel");
         snprintf(errbuf, sizeof(errbuf), "null source");
         rc = 1;
     } else {
@@ -1410,7 +1442,7 @@ PORISM_API int porism_run_json(const char *src, const char *params_json, char *o
     return rc;
 }
 
-const char *porism_abi_version(void) { return PORISM_ABI_VERSION; }
+PORISM_API const char *PORISM_CALL porism_abi_version(void) { return PORISM_ABI_VERSION; }
 
 #ifndef PORISM_LIB
 static char *readfile(const char *path) {
@@ -1436,17 +1468,20 @@ int main(int argc, char **argv) {
             printf("Porism Interpreter v%s\n\n", PORISM_VERSION);
             printf("Usage:\n"
                 "  porism \"<code>\"                     Run inline Porism code.\n"
-                "  porism \"<code>\" -p '<json>'         Run inline Porism code.\n"
+                "  porism \"<code>\" -p \"<json>\"        Run code with flat JSON params.\n"
                 "  porism -f <file.prsm>               Run a .prsm source file.\n"
-                "  porism -f <file.prsm> -p '<json>'   Run a file with flat JSON params.\n"
+                "  porism -f <file.prsm> -p \"<json>\"  Run a file with params.\n"
                 "  porism -h | --help                  Show this help.\n"
                 "  porism -v | --version               Show version.\n"
                 "\n"
                 "Options:\n"
                 "  -f <file.prsm>     Source file to execute.\n"
-                "  -p '<json>'        Flat JSON object passed to the program.\n"
+                "  -p \"<json>\"       Flat JSON object, string values only.\n"
                 "  -h, --help         Show this help and exit.\n"
-                "  -v, --version      Show version and exit.\n");
+                "  -v, --version      Show version and exit.\n"
+                "\n"
+                "Windows CMD: use DOUBLE quotes. Single quotes reach the program\n"
+                "literally, so the whole argument is read as a string literal.\n");
             return 0;
         }
         if (!strcmp(argv[i], "-p") && i + 1 < argc) { params = argv[++i]; continue; }
@@ -1454,17 +1489,29 @@ int main(int argc, char **argv) {
         if (!code && !file) code = argv[i];
     }
     if (!code && !file) {
-        // fprintf(stderr, "usage: porism -f <file.prsm> -p '<flat JSON object>' | -f <file.prsm> | <code>\n");
-        fprintf(stderr, "usage: porism <code> | -f <file.prsm> (-p '<flat JSON object>')\n");
+        fprintf(stderr, "usage: porism <code> | -f <file.prsm> (-p \"<flat JSON object>\")\n");
         return 2;
     }
     char *src;
     if (file) src = readfile(file);
     else src = (char *)code;
     size_t cap = 1u << 20;
-    char *buf = (char *)malloc(cap);
-    if (!buf) { fprintf(stderr, "out of memory\n"); return 1; }
-    int rc = porism_run_json(src, params, buf, cap);
+    char *buf = 0;
+    int rc = 2;
+    /* 结果对象超出缓冲时按 4 倍重试。求值无副作用，重跑是安全的。 */
+    for (int attempt = 0; attempt < 6; attempt++) {
+        char *tmp = (char *)realloc(buf, cap);
+        if (!tmp) {
+            fprintf(stderr, "porism: out of memory (result buffer)\n");
+            free(buf); if (file) free(src); return 1;
+        }
+        buf = tmp;
+        rc = porism_run_json(src, params, buf, cap);
+        if (rc != 2) break;
+        if (cap > ((size_t)1 << 30)) break;
+        cap *= 4;
+    }
+    if (rc == 2) fprintf(stderr, "porism: result object exceeds %zu bytes\n", cap);
     if (buf[0]) {
         fputs(buf, stdout);
         if (buf[strlen(buf) - 1] != '\n') fputc('\n', stdout);

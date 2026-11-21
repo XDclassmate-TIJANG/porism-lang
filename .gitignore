@@ -3,3 +3,6 @@ dist/
 
 # 暂时没写好
 docs/
+
+# 测试
+tests/

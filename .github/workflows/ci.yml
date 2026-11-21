@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build
+        run: bash core/run.sh build
+
+      - name: Regression tests
+        run: bash core/tests/run.sh core/dist/linux-x86_64/bin/porism.linux
+
+  windows:
+    runs-on: windows-latest
+    defaults:
+      run:
+        shell: msys2 {0}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: MINGW64
+          install: >-
+            mingw-w64-x86_64-gcc
+            mingw-w64-x86_64-binutils
+            mingw-w64-x86_64-tools
+
+      - name: Build
+        run: bash core/run.sh build
+
+      - name: Check DLL exports
+        run: grep -q porism_abi_version core/dist/windows-x86_64/lib/porism.def
+
+      - name: Regression tests
+        run: bash core/tests/run.sh core/dist/windows-x86_64/bin/porism.exe
