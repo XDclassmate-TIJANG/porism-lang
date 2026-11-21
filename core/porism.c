@@ -1456,6 +1456,7 @@ static char *readfile(const char *path) {
 }
 int main(int argc, char **argv) {
     const char *file = 0, *code = 0, *params = 0;
+    int json_output = 0;   /* 默认输出 outputs 内容；--json 时输出完整结果对象 */
     for (int i = 1; i < argc; i++) {
         // Version of Interpreter.
         if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-v")) {
@@ -1466,23 +1467,28 @@ int main(int argc, char **argv) {
         if (!strcmp(argv[i], "--help") || !strcmp(argv[i], "-h")) {
             printf("Porism Interpreter v%s\n\n", PORISM_VERSION);
             printf("Usage:\n"
-                "  porism \"<code>\"                     Run inline Porism code.\n"
+                "  porism \"<code>\"                     Run code; print output lines.\n"
                 "  porism \"<code>\" -p \"<json>\"        Run code with flat JSON params.\n"
                 "  porism -f <file.prsm>               Run a .prsm source file.\n"
                 "  porism -f <file.prsm> -p \"<json>\"  Run a file with params.\n"
+                "  porism \"<code>\" --json             Print the full JSON result object.\n"
                 "  porism -h | --help                  Show this help.\n"
                 "  porism -v | --version               Show version.\n"
                 "\n"
                 "Options:\n"
                 "  -f <file.prsm>     Source file to execute.\n"
                 "  -p \"<json>\"       Flat JSON object, string values only.\n"
+                "  --json, -j         Print the full JSON result object instead of\n"
+                "                     the output lines (default).\n"
                 "  -h, --help         Show this help and exit.\n"
                 "  -v, --version      Show version and exit.\n"
                 "\n"
+                "By default output lines go to stdout; diagnostics go to stderr.\n"
                 "Windows CMD: use DOUBLE quotes. Single quotes reach the program\n"
                 "literally, so the whole argument is read as a string literal.\n");
             return 0;
         }
+        if (!strcmp(argv[i], "--json") || !strcmp(argv[i], "-j")) { json_output = 1; continue; }
         if (!strcmp(argv[i], "-p") && i + 1 < argc) { params = argv[++i]; continue; }
         if (!strcmp(argv[i], "-f") && i + 1 < argc) { file = argv[++i]; continue; }
         if (!code && !file) code = argv[i];
@@ -1511,9 +1517,21 @@ int main(int argc, char **argv) {
         cap *= 4;
     }
     if (rc == 2) fprintf(stderr, "porism: result object exceeds %zu bytes\n", cap);
-    if (buf[0]) {
-        fputs(buf, stdout);
-        if (buf[strlen(buf) - 1] != '\n') fputc('\n', stdout);
+    if (json_output) {
+        if (buf[0]) {
+            fputs(buf, stdout);
+            if (buf[strlen(buf) - 1] != '\n') fputc('\n', stdout);
+        }
+    } else {
+        /* 默认模式：stdout 仅输出 outputs 内容；诊断写 stderr，不混入输出。 */
+        for (int i = 0; i < noutputs; i++) {
+            fputs(outputs[i], stdout);
+            fputc('\n', stdout);
+        }
+        if (errbuf[0] && rc != 2) {
+            fprintf(stderr, "porism: %s at %d:%d: %s\n",
+                    err_type, err_line, err_col, errbuf);
+        }
     }
     if (file) free(src);
     free(buf);

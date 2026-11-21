@@ -14,7 +14,6 @@ Porism 是一种以表达式求值为核心、按语句序列顺序执行的解�
 ```bash
 cd core
 ./run.sh build                              # -> dist/<platform>-<arch>/{bin,lib}
-./run.sh release -PORISM_VERSION=0.1.0-Beta  # 构建 + 打包 + 生成 .sha256
 ```
 
 | 目标产物 | Windows | Linux |
@@ -25,7 +24,7 @@ cd core
 | 静态库 | `lib/libporism.a` | `lib/libporism.a` |
 | 头文件 | `include/porism.h` | `include/porism.h` |
 
-`./run.sh help` 列出全部配置项：`PORISM_VERSION`、`PORISM_SOVER`、`PORISM_WERROR`、`PORISM_DIST`、`PORISM_7Z`、`CC`、`AR`。发布包格式：Windows 为 `zip`，Linux 为 `tar.gz`；包内为平铺布局，并生成同名 `.sha256` 校验和。
+`./run.sh help` 列出全部配置项：`PORISM_VERSION`、`PORISM_SOVER`、`PORISM_WERROR`、`PORISM_DIST`、`PORISM_7Z`、`CC`、`AR`。
 
 ## 命令行入口
 
@@ -36,8 +35,9 @@ cd core
 
 ```bash
 # bash / MSYS2 / Linux
-porism "Output(1+2*3)"
-porism 'Output(num($x) + 1)' -p '{"x":"41"}'       # -> {"status":"ok","errors":null,"outputs":["42"]}
+porism "Output(1+2*3)"                             # -> 7
+porism 'Output(num($x) + 1)' -p '{"x":"41"}'       # -> 42
+porism --json 'Output(num($x) + 1)' -p '{"x":"41"}'# -> {"status":"ok","errors":null,"outputs":["42"]}
 porism -f demo.prsm
 porism --version
 ```
@@ -52,7 +52,9 @@ REM Windows CMD
 porism.exe "Output(num($x) + 1)" -p "{\"x\":\"41\"}"
 ```
 
-命令行入口以结果对象模式运行，向标准输出写入一行结果对象：成功为 `{"status":"ok","errors":null,"outputs":[...]}`，失败为 `{"status":"error","errors":[{"id","type","message","line","col"}],"outputs":[...]}`。错误发生前已产生的输出予以保留，不因后续错误而清空。错误类别取值 `code` / `kernel` / `parameter` / `unknown`。
+命令行入口默认以文本输出模式运行，向标准输出逐行写入 `outputs` 的内容；诊断写入标准错误，不混入输出。加 `--json`（或 `-j`）后，改为向标准输出写入一行完整结果对象：成功为 `{"status":"ok","errors":null,"outputs":[...]}`，失败为 `{"status":"error","errors":[{"id","type","message","line","col"}],"outputs":[...]}`。错误发生前已产生的输出予以保留，不因后续错误而清空。错误类别取值 `code` / `kernel` / `parameter` / `unknown`。退出码为 `0`（成功）或 `1`（错误）。
+
+C ABI 的结果对象语义不受该参数影响：`porism_run_json` 始终返回结果对象；`--json` 仅决定命令行入口把哪一种形式写到标准输出。
 
 ## 语言概要
 
@@ -93,13 +95,6 @@ Output("a" * 3)                    # -> aaa
 - **Windows 控制台编码**：源码应为 NUL 结尾的 UTF-8 字符串；非 ASCII 源码建议以 `-f` 从文件读取，或先执行 `chcp 65001`。经命令行参数直接传入时可能被本地代码页转换。
 - **输出缓冲区**：命令行入口的结果缓冲区从 1 MiB 起按需扩容（上限 1 GiB）；宿主调用须自行提供足够的 `out` / `cap`。
 - **诊断文本**：字符串值以 NUL 结尾，不接受内嵌 NUL；定义 `PORISM_ZH` 时主要诊断文本切换为中文，部分以字符串字面量直接给出的诊断固定为英文。
-
-## 发布流程
-
-1. 以 `./run.sh build -PORISM_WERROR=1` 完成构建
-2. 保持 git tag、`PORISM_VERSION` 与 `PORISM_ABI_VERSION` 三者一致
-3. `./run.sh release` 生成压缩包与 `.sha256`，上传为 Release 资产
-4. 更新 CHANGELOG；若 ABI 有变动，递增 `PORISM_ABI_VERSION`
 
 ## 许可证
 

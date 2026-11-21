@@ -11,7 +11,7 @@ def run(a="1", b="2"):
     payload = json.dumps({"a": a, "b": b}, separators=(",", ":"))
 
     result = subprocess.run(
-        [str(PORISM), CODE, "-p", payload],
+        [str(PORISM), "--json", CODE, "-p", payload],
         capture_output=True,
         text=True,
         encoding="utf-8",

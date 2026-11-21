@@ -55,7 +55,7 @@ usage() {
   help      本帮助
 
 配置（环境变量，或 -KEY=VALUE / KEY=VALUE，位置不限）:
-  PORISM_VERSION  版本号，默认 1.0.0（写进 --version 与包名）
+  PORISM_VERSION  版本号，默认 0.1.0-Beta（写进 --version 与包名）
   PORISM_SOVER    Linux SONAME 主版本，默认 1
   PORISM_WERROR   1 = 追加 -Werror
   PORISM_DIST     输出目录，默认 core/dist
@@ -64,7 +64,7 @@ usage() {
 
 示例:
   ./run.sh build
-  ./run.sh release -PORISM_VERSION=1.0.0 -PORISM_WERROR=1
+  ./run.sh release -PORISM_VERSION=0.1.0-Beta -PORISM_WERROR=1
 
 约定:
   Windows 输出 zip（用 7-Zip 或 zip 命令），Linux 输出 tar.gz；

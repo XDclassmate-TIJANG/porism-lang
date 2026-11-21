@@ -30,11 +30,12 @@ ok()  { printf '  ok   %s\n' "$1"; pass=$((pass + 1)); }
 bad() { printf '  FAIL %s\n       %s\n' "$1" "$2"; fail=$((fail + 1)); }
 
 # check <名称> <期望返回码> <必须包含的字串> <porism 参数...>
+# 旧断言针对完整结果对象，统一以 --json 运行。
 check() {
   local name="$1" want_rc="$2" needle="$3"
   shift 3
   local out rc
-  out="$("$BIN" "$@" 2>/dev/null)"
+  out="$("$BIN" --json "$@" 2>/dev/null)"
   rc=$?
   if [ "$rc" -ne "$want_rc" ]; then
     bad "$name" "返回码 $rc，期望 $want_rc；输出: $out"
@@ -49,6 +50,13 @@ check() {
 
 TMP="$(mktemp -d)"
 trap 'rm -f "$TMP"/* 2>/dev/null; rmdir "$TMP" 2>/dev/null || true' EXIT
+
+# capture <文件前缀> <porism 参数...>：分别落盘 stdout / stderr，返回码存入 RC
+capture() {
+  local tag="$1"; shift
+  "$BIN" "$@" >"$TMP/$tag.out" 2>"$TMP/$tag.err"
+  RC=$?
+}
 
 printf '使用: %s\n\n' "$BIN"
 
@@ -87,6 +95,52 @@ printf 'Output(len("你好"))' > "$TMP/utf8.prsm"
 check "-f UTF-8 源文件"    0 '"outputs":["2"]'                              -f "$TMP/utf8.prsm"
 check "--version"          0 'Porism Interpreter v'                         --version
 check "--help"             0 'Usage:'                                       --help
+
+echo "[输出模式：默认文本 / --json]"
+# 默认：stdout 为纯 outputs 内容（每行一个），无 JSON 包装
+capture plain 'Output(1+2*3)'
+if [ "$RC" -eq 0 ] && [ "$(tr -d '\r' < "$TMP/plain.out")" = '7' ] && [ ! -s "$TMP/plain.err" ]; then
+  ok "默认输出纯 outputs 内容"
+else
+  bad "默认输出纯 outputs 内容" "rc=$RC stdout=$(cat "$TMP/plain.out") stderr=$(cat "$TMP/plain.err")"
+fi
+# 默认：多行输出逐行呈现
+capture plain_multi $'Output("a")\nOutput("b")'
+if [ "$RC" -eq 0 ] && [ "$(tr -d '\r' < "$TMP/plain_multi.out")" = "$(printf 'a\nb')" ]; then
+  ok "默认多行逐行输出"
+else
+  bad "默认多行逐行输出" "rc=$RC stdout=$(cat "$TMP/plain_multi.out")"
+fi
+# 默认：诊断走 stderr，不混入 stdout
+capture plain_err 'Output(nope)'
+if [ "$RC" -eq 1 ] && [ ! -s "$TMP/plain_err.out" ] && grep -Fq 'undefined variable' "$TMP/plain_err.err"; then
+  ok "默认诊断写 stderr 且 stdout 干净"
+else
+  bad "默认诊断写 stderr 且 stdout 干净" "rc=$RC stdout=$(cat "$TMP/plain_err.out") stderr=$(cat "$TMP/plain_err.err")"
+fi
+# 默认：出错前输出保留在 stdout，诊断在 stderr
+capture plain_keep $'Output("first")\nOutput(nope)'
+if [ "$RC" -eq 1 ] && [ "$(cat "$TMP/plain_keep.out")" = 'first' ] && grep -Fq 'undefined variable' "$TMP/plain_keep.err"; then
+  ok "默认出错前输出保留、诊断分离"
+else
+  bad "默认出错前输出保留、诊断分离" "rc=$RC stdout=$(cat "$TMP/plain_keep.out") stderr=$(cat "$TMP/plain_keep.err")"
+fi
+# --json 与 -j 输出完整结果对象
+for flag in --json -j; do
+  out="$("$BIN" "$flag" 'Output(1+2*3)' 2>/dev/null)"
+  if [ "$out" = '{"status":"ok","errors":null,"outputs":["7"]}' ]; then
+    ok "$flag 输出完整结果对象"
+  else
+    bad "$flag 输出完整结果对象" "$out"
+  fi
+done
+# --json 下诊断在结果对象内，stdout 仍是 JSON
+capture json_err --json 'Output(nope)'
+if [ "$RC" -eq 1 ] && grep -Fq '"status":"error"' "$TMP/json_err.out" && grep -Fq 'undefined variable' "$TMP/json_err.out"; then
+  ok "--json 诊断在结果对象内"
+else
+  bad "--json 诊断在结果对象内" "rc=$RC stdout=$(cat "$TMP/json_err.out") stderr=$(cat "$TMP/json_err.err")"
+fi
 
 echo "[大结果：不得静默丢弃]"
 { printf 'Output("'; printf '%*s' 1200000 '' | tr ' ' 'a'; printf '")'; } > "$TMP/big.prsm"
