@@ -96,7 +96,25 @@ check "-P 文件参数"        0 '"outputs":["42"]'                             
 check "-P 与 --json"       0 '"outputs":["42"]'                             --json 'Output(num($x) + 1)' -P "$TMP/params.json"
 printf 'Output(len("你好"))' > "$TMP/utf8.prsm"
 check "-f UTF-8 源文件"    0 '"outputs":["2"]'                              -f "$TMP/utf8.prsm"
-check "--version"          0 'Porism Interpreter v'                         --version
+capture ver_text --version
+if [ "$RC" -eq 0 ] && grep -Fq 'Porism Interpreter v0.1.0-Beta' "$TMP/ver_text.out"; then
+  ok "--version 文本"
+else
+  bad "--version 文本" "rc=$RC stdout=$(cat "$TMP/ver_text.out")"
+fi
+check "--version + --json"  0 '"version": "0.1.0-Beta"'                     --version
+capture v_text -v
+if [ "$RC" -eq 0 ] && grep -Fq 'Porism Interpreter v0.1.0-Beta' "$TMP/v_text.out"; then
+  ok "-v 文本"
+else
+  bad "-v 文本" "rc=$RC stdout=$(cat "$TMP/v_text.out")"
+fi
+capture v_json -v -j
+if [ "$RC" -eq 0 ] && grep -Fq '"version": "0.1.0-Beta"' "$TMP/v_json.out"; then
+  ok "-v + -j（逆序）"
+else
+  bad "-v + -j（逆序）" "rc=$RC stdout=$(cat "$TMP/v_json.out")"
+fi
 check "--help"             0 'Usage:'                                       --help
 
 echo "[选项解析：未知选项与缺值不得当作源码]"

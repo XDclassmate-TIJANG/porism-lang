@@ -40,7 +40,8 @@ porism 'Output(num($x) + 1)' -p '{"x":"41"}'       # -> 42
 porism 'Output(num($x) + 1)' -P params.json        # -> 42（参数对象从文件读取）
 porism --json 'Output(num($x) + 1)' -p '{"x":"41"}'# -> {"status":"ok","errors":null,"outputs":["42"]}
 porism -f demo.prsm
-porism --version
+porism --version                                   # -> Porism Interpreter v0.1.0-Beta
+porism --version --json                            # -> {"version": "0.1.0-Beta"}
 ```
 
 ```powershell

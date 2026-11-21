@@ -1460,10 +1460,23 @@ int main(int argc, char **argv) {
     const char *file = 0, *code = 0, *params = 0, *params_file = 0;
     char *params_owned = 0;   /* -P 读入的参数文件内容，需释放 */
     int json_output = 0;   /* 默认输出 outputs 内容；--json 时输出完整结果对象 */
+    /* --version 的输出形态取决于是否请求了 --json/-j，与参数顺序无关。 */
+    int want_json = 0;
     for (int i = 1; i < argc; i++) {
-        // Version of Interpreter.
+        if (!strcmp(argv[i], "--json") || !strcmp(argv[i], "-j")) { want_json = 1; break; }
+    }
+    for (int i = 1; i < argc; i++) {
+        // Version of Interpreter: human-readable by default, JSON with --json/-j.
         if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-v")) {
-            printf("Porism Interpreter v%s\n", PORISM_VERSION);
+            if (want_json) {
+                size_t n = json_esc_len(PORISM_VERSION);
+                char *v = (char *)malloc(n + 1);
+                if (v) { json_esc(v, PORISM_VERSION); v[n] = 0; }
+                printf("{\"version\": \"%s\"}\n", v ? v : PORISM_VERSION);
+                free(v);
+            } else {
+                printf("Porism Interpreter v%s\n", PORISM_VERSION);
+            }
             return 0;
         }
         // Help Information.
@@ -1486,7 +1499,7 @@ int main(int argc, char **argv) {
                 "  --json, -j         Print the full JSON result object instead of\n"
                 "                     the output lines (default).\n"
                 "  -h, --help         Show this help and exit.\n"
-                "  -v, --version      Show version and exit.\n"
+                "  -v, --version      Show version and exit; with --json/-j, print it as JSON.\n"
                 "\n"
                 "By default output lines go to stdout; diagnostics go to stderr.\n"
                 "Windows CMD: use DOUBLE quotes. Single quotes reach the program\n"
