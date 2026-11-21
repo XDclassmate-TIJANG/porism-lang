@@ -1152,7 +1152,7 @@ static int hexval(int c) {
 }
 /* 解析 JSON 字符串，返回 arena 内的 C 串；失败按 parameter 分类。 */
 static char *jstring(const char **p) {
-    if (**p != '"') fail_t("parameter", 0, 0, "%s", "-p: expected a JSON string");
+    if (**p != '"') fail_t("parameter", 0, 0, "%s", "parameter: expected a JSON string");
     (*p)++;
     char *buf = (char *)mem(strlen(*p) + 8);
     size_t m = 0;
@@ -1161,7 +1161,7 @@ static char *jstring(const char **p) {
         if (c == '\\') {
             (*p)++;
             int e = (unsigned char)*(*p);
-            if (!e) fail_t("parameter", 0, 0, "%s", "-p: bad string escape");
+            if (!e) fail_t("parameter", 0, 0, "%s", "parameter: bad string escape");
             switch (e) {
                 case 'n': buf[m++] = '\n'; (*p)++; break;
                 case 't': buf[m++] = '\t'; (*p)++; break;
@@ -1174,7 +1174,7 @@ static char *jstring(const char **p) {
                     unsigned int cp = 0;
                     for (int j = 0; j < 4; j++) {
                         int h = hexval((unsigned char)(*p)[j]);
-                        if (h < 0) fail_t("parameter", 0, 0, "%s", "-p: bad \\u escape");
+                        if (h < 0) fail_t("parameter", 0, 0, "%s", "parameter: bad \\u escape");
                         cp = cp * 16 + (unsigned int)h;
                     }
                     (*p) += 4;
@@ -1209,13 +1209,13 @@ static char *jstring(const char **p) {
                     }
                     break;
                 }
-                default: fail_t("parameter", 0, 0, "-p: bad string escape \\%c", e);
+                default: fail_t("parameter", 0, 0, "parameter: bad string escape \\%c", e);
             }
         } else {
             buf[m++] = (char)c; (*p)++;
         }
     }
-    if (**p != '"') fail_t("parameter", 0, 0, "%s", "-p: unterminated JSON string");
+    if (**p != '"') fail_t("parameter", 0, 0, "%s", "parameter: unterminated JSON string");
     (*p)++;
     buf[m] = 0;
     return buf;
@@ -1225,7 +1225,7 @@ static void params_put(const char *key, const char *val) {
     for (int i = 0; i < nparams; i++)
         if (!strcmp(pkeys[i], key)) { pvals[i] = (char *)val; return; }
     if (nparams >= MAX_PARAMS_TABLE)
-        fail_t("parameter", 0, 0, "%s", "-p: too many parameters");
+        fail_t("parameter", 0, 0, "%s", "parameter: too many parameters");
     pkeys[nparams] = (char *)key;
     pvals[nparams] = (char *)val;
     nparams++;
@@ -1235,32 +1235,32 @@ static void parse_params_json(const char *text) {
     if (!text || !*text) return;
     const char *p = text;
     jskip(&p);
-    if (*p++ != '{') fail_t("parameter", 0, 0, "%s", "-p: top level must be a JSON object");
+    if (*p++ != '{') fail_t("parameter", 0, 0, "%s", "parameter: top level must be a JSON object");
     jskip(&p);
     if (*p == '}') {
         p++; jskip(&p);
-        if (*p) fail_t("parameter", 0, 0, "%s", "-p: trailing content after object");
+        if (*p) fail_t("parameter", 0, 0, "%s", "parameter: trailing content after object");
         return;
     }
     for (;;) {
         jskip(&p);
         char *key = jstring(&p);
         if (!valid_param_key(key))
-            fail_t("parameter", 0, 0, "-p: invalid parameter key '%s'", key);
+            fail_t("parameter", 0, 0, "parameter: invalid parameter key '%s'", key);
         jskip(&p);
-        if (*p++ != ':') fail_t("parameter", 0, 0, "%s", "-p: expected ':' after key");
+        if (*p++ != ':') fail_t("parameter", 0, 0, "%s", "parameter: expected ':' after key");
         jskip(&p);
         if (*p != '"')
-            fail_t("parameter", 0, 0, "%s", "-p: values must be strings (flat object)");
+            fail_t("parameter", 0, 0, "%s", "parameter: values must be strings (flat object)");
         char *val = jstring(&p);
         params_put(key, val);
         jskip(&p);
         if (*p == ',') { p++; continue; }
         if (*p == '}') { p++; break; }
-        fail_t("parameter", 0, 0, "%s", "-p: expected ',' or '}'");
+        fail_t("parameter", 0, 0, "%s", "parameter: expected ',' or '}'");
     }
     jskip(&p);
-    if (*p) fail_t("parameter", 0, 0, "%s", "-p: trailing content after object");
+    if (*p) fail_t("parameter", 0, 0, "%s", "parameter: trailing content after object");
 }
 
 /* JSON 结果对象序列化 */
@@ -1445,17 +1445,20 @@ PORISM_API int PORISM_CALL porism_run_json(const char *src, const char *params_j
 PORISM_API const char *PORISM_CALL porism_abi_version(void) { return PORISM_ABI_VERSION; }
 
 #ifndef PORISM_LIB
-static char *readfile(const char *path) {
+static char *readfile(const char *path, const char *what) {
     FILE *f = fopen(path, "rb");
-    if (!f) { fprintf(stderr, "cannot open %s\n", path); exit(2); }
+    if (!f) { fprintf(stderr, "porism: cannot open %s '%s'\n", what, path); exit(2); }
     fseek(f, 0, SEEK_END); long n = ftell(f); fseek(f, 0, SEEK_SET);
     char *b = (char *)malloc((size_t)n + 1);
-    if (!b || fread(b, 1, (size_t)n, f) != (size_t)n) { fprintf(stderr, "read failed\n"); exit(2); }
+    if (!b || fread(b, 1, (size_t)n, f) != (size_t)n) {
+        fprintf(stderr, "porism: failed to read %s '%s'\n", what, path); exit(2);
+    }
     b[n] = 0; fclose(f);
     return b;
 }
 int main(int argc, char **argv) {
-    const char *file = 0, *code = 0, *params = 0;
+    const char *file = 0, *code = 0, *params = 0, *params_file = 0;
+    char *params_owned = 0;   /* -P 读入的参数文件内容，需释放 */
     int json_output = 0;   /* 默认输出 outputs 内容；--json 时输出完整结果对象 */
     for (int i = 1; i < argc; i++) {
         // Version of Interpreter.
@@ -1469,6 +1472,7 @@ int main(int argc, char **argv) {
             printf("Usage:\n"
                 "  porism \"<code>\"                     Run code; print output lines.\n"
                 "  porism \"<code>\" -p \"<json>\"        Run code with flat JSON params.\n"
+                "  porism \"<code>\" -P <params.json>   Run code with params from a file.\n"
                 "  porism -f <file.prsm>               Run a .prsm source file.\n"
                 "  porism -f <file.prsm> -p \"<json>\"  Run a file with params.\n"
                 "  porism \"<code>\" --json             Print the full JSON result object.\n"
@@ -1477,7 +1481,8 @@ int main(int argc, char **argv) {
                 "\n"
                 "Options:\n"
                 "  -f <file.prsm>     Source file to execute.\n"
-                "  -p \"<json>\"       Flat JSON object, string values only.\n"
+                "  -p \"<json>\"       Flat JSON object as a string (mutually exclusive with -P).\n"
+                "  -P <params.json>   Read the flat JSON object from a file.\n"
                 "  --json, -j         Print the full JSON result object instead of\n"
                 "                     the output lines (default).\n"
                 "  -h, --help         Show this help and exit.\n"
@@ -1489,17 +1494,40 @@ int main(int argc, char **argv) {
             return 0;
         }
         if (!strcmp(argv[i], "--json") || !strcmp(argv[i], "-j")) { json_output = 1; continue; }
-        if (!strcmp(argv[i], "-p") && i + 1 < argc) { params = argv[++i]; continue; }
-        if (!strcmp(argv[i], "-f") && i + 1 < argc) { file = argv[++i]; continue; }
+        if (!strcmp(argv[i], "-p")) {
+            if (i + 1 >= argc) { fprintf(stderr, "porism: -p requires a JSON argument\n"); return 2; }
+            params = argv[++i]; continue;
+        }
+        if (!strcmp(argv[i], "-P")) {
+            if (i + 1 >= argc) { fprintf(stderr, "porism: -P requires a JSON file path\n"); return 2; }
+            params_file = argv[++i]; continue;
+        }
+        if (!strcmp(argv[i], "-f")) {
+            if (i + 1 >= argc) { fprintf(stderr, "porism: -f requires a file path\n"); return 2; }
+            file = argv[++i]; continue;
+        }
+        /* 形如 -x / --xxx 的未知选项不得静默当作源码 */
+        if (argv[i][0] == '-' && argv[i][1] != '\0') {
+            fprintf(stderr, "porism: unknown option '%s'\n", argv[i]);
+            return 2;
+        }
         if (!code && !file) code = argv[i];
     }
     if (!code && !file) {
-        fprintf(stderr, "usage: porism <code> | -f <file.prsm> (-p \"<flat JSON object>\")\n");
+        fprintf(stderr, "usage: porism <code> | -f <file.prsm> (-p \"<flat JSON object>\" | -P <params.json>)\n");
+        return 2;
+    }
+    if (params && params_file) {
+        fprintf(stderr, "porism: -p and -P are mutually exclusive\n");
         return 2;
     }
     char *src;
-    if (file) src = readfile(file);
+    if (file) src = readfile(file, "source file");
     else src = (char *)code;
+    if (params_file) {
+        params_owned = readfile(params_file, "parameter file");
+        params = params_owned;
+    }
     size_t cap = 1u << 20;
     char *buf = 0;
     int rc = 2;
@@ -1508,7 +1536,7 @@ int main(int argc, char **argv) {
         char *tmp = (char *)realloc(buf, cap);
         if (!tmp) {
             fprintf(stderr, "porism: out of memory (result buffer)\n");
-            free(buf); if (file) free(src); return 1;
+            free(buf); free(params_owned); if (file) free(src); return 1;
         }
         buf = tmp;
         rc = porism_run_json(src, params, buf, cap);
@@ -1534,6 +1562,7 @@ int main(int argc, char **argv) {
         }
     }
     if (file) free(src);
+    free(params_owned);
     free(buf);
     return rc == 0 ? 0 : 1;
 }

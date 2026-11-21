@@ -8,3 +8,6 @@ docs/
 tests/
 !core/tests/
 !core/tests/run.sh
+
+# Python
+__pycache__

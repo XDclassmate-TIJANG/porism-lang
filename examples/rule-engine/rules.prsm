@@ -1,0 +1,26 @@
+# 订单定价规则
+# 会员等级：$member ∈ {VIP, PLUS, NORMAL}
+#
+# 边界约束（rule 内置，纵深防御）：
+#   订单金额 ≥ 0；优惠券 ∈ [0, 订单金额]；折扣率由会员等级白名单决定。
+#   即使绕过后端校验直接执行本规则，也不会算出负数或超额结果。
+
+# 输入钳制：负数金额归零，优惠券不超过金额
+amount = max(0, float($amount))
+coupon = min(max(0, float($coupon)), amount)
+subtotal = amount - coupon
+
+# 阶梯满减：满 200 减 50，满 100 减 20
+reduction = subtotal >= 200 ? 50 : (subtotal >= 100 ? 20 : 0)
+
+# 会员折扣白名单：未知等级按无折扣处理
+rate = $member == "VIP" ? 0.8 : ($member == "PLUS" ? 0.9 : 1.0)
+
+# 实付金额，四舍五入到分
+payable = round((subtotal - reduction) * rate, 2)
+
+# 输出顺序：折后小计、满减、折扣率、实付金额
+Output(str(round(subtotal - reduction, 2)))
+Output(str(reduction))
+Output(str(rate))
+Output(str(payable))

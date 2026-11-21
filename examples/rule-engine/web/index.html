@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Porism 规则引擎示例</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <main class="app">
+    <header class="head">
+      <h1>订单定价规则引擎</h1>
+      <p class="sub">业务规则写在 .prsm 配置里，改规则无需改宿主代码</p>
+      <div class="chain" aria-label="调用链">
+        <span>规则 + 订单数据</span><b>&rarr;</b><span>Porism 求值内核</span><b>&rarr;</b><span>实付金额</span>
+      </div>
+    </header>
+
+    <section class="card">
+      <div class="card-head">
+        <span class="card-title">业务规则 <code>rules.prsm</code></span>
+        <span class="tag">可编辑</span>
+      </div>
+      <textarea id="rule" spellcheck="false" rows="11"></textarea>
+      <p class="hint">编辑规则后点“应用规则并结算”，即时生效——宿主代码无需改动。</p>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><span class="card-title">订单数据（注入为参数对象）</span></div>
+      <div class="fields">
+        <label class="field">
+          <span>会员等级 $member</span>
+          <select id="member">
+            <option value="VIP">VIP</option>
+            <option value="PLUS">PLUS</option>
+            <option value="NORMAL" selected>NORMAL</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>订单金额 $amount</span>
+          <input id="amount" type="number" inputmode="decimal" min="0" max="1000000000" step="any" value="260">
+        </label>
+        <label class="field">
+          <span>优惠券 $coupon</span>
+          <input id="coupon" type="number" inputmode="decimal" min="0" max="1000000000" step="any" value="30">
+        </label>
+      </div>
+      <button id="run" type="button">应用规则并结算</button>
+    </section>
+
+    <section class="card result" id="result" hidden>
+      <div class="result-head">
+        <span id="badge" class="badge"></span>
+        <span class="exit" id="exit"></span>
+      </div>
+
+      <div id="paybox" class="paybox">
+        <span class="pay-label">实付金额</span>
+        <output id="payable" class="payable"></output>
+      </div>
+
+      <div id="breakdown" class="breakdown"></div>
+      <ul id="errors" class="errors"></ul>
+      <details>
+        <summary>原始结果对象</summary>
+        <pre id="raw"></pre>
+      </details>
+    </section>
+
+    <p id="conn" class="conn">正在连接本地后端&hellip;</p>
+    <button id="quit" type="button" class="quit">退出应用</button>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

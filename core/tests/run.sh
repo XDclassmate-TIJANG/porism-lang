@@ -91,10 +91,51 @@ check "3000 层幂运算"      1 'expression nesting too deep'                  
 echo "[参数、文件与 CLI]"
 check "-p 平铺参数"        0 '"outputs":["42"]'                             'Output(num($x) + 1)' -p '{"x":"41"}'
 check "-p 缺失参数"        1 'parameter $y not provided by -p'              'Output($y)'
+printf '{"x":"41"}' > "$TMP/params.json"
+check "-P 文件参数"        0 '"outputs":["42"]'                             'Output(num($x) + 1)' -P "$TMP/params.json"
+check "-P 与 --json"       0 '"outputs":["42"]'                             --json 'Output(num($x) + 1)' -P "$TMP/params.json"
 printf 'Output(len("你好"))' > "$TMP/utf8.prsm"
 check "-f UTF-8 源文件"    0 '"outputs":["2"]'                              -f "$TMP/utf8.prsm"
 check "--version"          0 'Porism Interpreter v'                         --version
 check "--help"             0 'Usage:'                                       --help
+
+echo "[选项解析：未知选项与缺值不得当作源码]"
+capture unknown_opt --json-typo 'Output(7)'
+if [ "$RC" -eq 2 ] && grep -Fq "unknown option" "$TMP/unknown_opt.err"; then
+  ok "未知选项明确报错"
+else
+  bad "未知选项明确报错" "rc=$RC stderr=$(cat "$TMP/unknown_opt.err")"
+fi
+capture missing_p 'Output(7)' -p
+if [ "$RC" -eq 2 ] && grep -Fq -- "-p requires" "$TMP/missing_p.err"; then
+  ok "-p 缺值明确报错"
+else
+  bad "-p 缺值明确报错" "rc=$RC stderr=$(cat "$TMP/missing_p.err")"
+fi
+capture missing_f -f
+if [ "$RC" -eq 2 ] && grep -Fq -- "-f requires" "$TMP/missing_f.err"; then
+  ok "-f 缺值明确报错"
+else
+  bad "-f 缺值明确报错" "rc=$RC stderr=$(cat "$TMP/missing_f.err")"
+fi
+capture missing_P 'Output(7)' -P
+if [ "$RC" -eq 2 ] && grep -Fq -- "-P requires" "$TMP/missing_P.err"; then
+  ok "-P 缺值明确报错"
+else
+  bad "-P 缺值明确报错" "rc=$RC stderr=$(cat "$TMP/missing_P.err")"
+fi
+capture nonexistent_P 'Output(7)' -P "$TMP/no-such-params.json"
+if [ "$RC" -eq 2 ] && grep -Fq "parameter file" "$TMP/nonexistent_P.err"; then
+  ok "-P 文件不存在明确报错"
+else
+  bad "-P 文件不存在明确报错" "rc=$RC stderr=$(cat "$TMP/nonexistent_P.err")"
+fi
+capture exclusive_pP 'Output(7)' -p '{"x":"1"}' -P "$TMP/params.json"
+if [ "$RC" -eq 2 ] && grep -Fq "mutually exclusive" "$TMP/exclusive_pP.err"; then
+  ok "-p 与 -P 互斥"
+else
+  bad "-p 与 -P 互斥" "rc=$RC stderr=$(cat "$TMP/exclusive_pP.err")"
+fi
 
 echo "[输出模式：默认文本 / --json]"
 # 默认：stdout 为纯 outputs 内容（每行一个），无 JSON 包装

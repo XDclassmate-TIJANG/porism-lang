@@ -37,6 +37,7 @@ cd core
 # bash / MSYS2 / Linux
 porism "Output(1+2*3)"                             # -> 7
 porism 'Output(num($x) + 1)' -p '{"x":"41"}'       # -> 42
+porism 'Output(num($x) + 1)' -P params.json        # -> 42（参数对象从文件读取）
 porism --json 'Output(num($x) + 1)' -p '{"x":"41"}'# -> {"status":"ok","errors":null,"outputs":["42"]}
 porism -f demo.prsm
 porism --version
@@ -72,7 +73,7 @@ Output("a" * 3)                    # -> aaa
 - 字符串字面量以单引号或双引号定界，允许 `\n \t \r \\ \" \'` 转义；`\0` 转义被拒绝并产生诊断，字符串值以 NUL 结尾的字节序列表示。
 - 内置常量：`true` `false` `null` `pi` `e`；上述名称为名称查找阶段的内置绑定，不得作为赋值目标。
 - 内建函数：`abs sqrt pow min max round num float str len upper lower`
-- 命令行入口以 `-p` 注入参数对象；参数对象为平铺 JSON 对象，值须为 JSON 字符串。源码中的参数引用 `$KEY` 求值为对应键的字符串值，参与数值运算前须经 `num()` 或 `float()` 显式转换。
+- 命令行入口以 `-p "<json>"` 注入内联参数对象，或以 `-P <params.json>` 从文件读取参数对象；两者互斥。参数对象为平铺 JSON 对象，值须为 JSON 字符串。源码中的参数引用 `$KEY` 求值为对应键的字符串值，参与数值运算前须经 `num()` 或 `float()` 显式转换。
 
 ## C ABI
 
