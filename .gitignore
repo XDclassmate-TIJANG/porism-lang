@@ -4,5 +4,7 @@ dist/
 # 暂时没写好
 docs/
 
-# 测试
+# 测试（回归脚本需纳入版本控制供 CI 使用）
 tests/
+!core/tests/
+!core/tests/run.sh

@@ -35,7 +35,7 @@ parse_args() {
 }
 
 load_cfg() {
-  VERSION="$(cfg PORISM_VERSION 1.0.0)"
+  VERSION="$(cfg PORISM_VERSION 0.1.0-Beta)"
   SOVER="$(cfg PORISM_SOVER 1)"
   CC="$(cfg CC gcc)"
   AR="$(cfg AR ar)"

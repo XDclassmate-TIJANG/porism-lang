@@ -15,7 +15,7 @@ extern "C" {
 // The version of Porism.
 #ifndef PORISM_VERSION
     /// Porism 编译器版本
-#   define PORISM_VERSION "1.0.0"       /* 可由构建脚本 -DPORISM_VERSION=... 覆盖 */
+#   define PORISM_VERSION "0.1.0-Beta"       /* 可由构建脚本 -DPORISM_VERSION=... 覆盖 */
 #endif
 
 #if defined(_WIN32)
@@ -37,7 +37,7 @@ extern "C" {
 #endif
 
 /// ABI版本
-#define PORISM_ABI_VERSION "1.0.0"
+#define PORISM_ABI_VERSION "0.1.0-Beta"
 
 /// 返回ABI的版本号
 PORISM_API const char *PORISM_CALL porism_abi_version(void);

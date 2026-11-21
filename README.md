@@ -14,7 +14,7 @@ Porism 是一种以表达式求值为核心、按语句序列顺序执行的解�
 ```bash
 cd core
 ./run.sh build                              # -> dist/<platform>-<arch>/{bin,lib}
-./run.sh release -PORISM_VERSION=1.0.0      # 构建 + 打包 + 生成 .sha256
+./run.sh release -PORISM_VERSION=0.1.0-Beta  # 构建 + 打包 + 生成 .sha256
 ```
 
 | 目标产物 | Windows | Linux |
@@ -74,7 +74,7 @@ Output("a" * 3)                    # -> aaa
 
 ## C ABI
 
-`core/porism.h` 定义统一 C ABI；`PORISM_ABI_VERSION` 为 `1.0.0`。
+`core/porism.h` 定义统一 C ABI；`PORISM_ABI_VERSION` 为 `0.1.0-Beta`。
 
 | 接口 | 行为 |
 | --- | --- |

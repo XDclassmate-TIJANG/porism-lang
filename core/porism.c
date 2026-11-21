@@ -1361,11 +1361,11 @@ static int write_result_json(int is_error) {
 // //////////////////////////////////////////////////////////////////
 // 对外接口
 // //////////////////////////////////////////////////////////////////
-PORISM_API const char *porism_error(void) { return errbuf; }
-PORISM_API int porism_error_line(void) { return err_line; }
-PORISM_API int porism_error_col(void) { return err_col; }
-PORISM_API size_t porism_output_len(void) { return outlen; }
-PORISM_API int porism_truncated(void) { return out_overflow; }
+PORISM_API const char *PORISM_CALL porism_error(void) { return errbuf; }
+PORISM_API int PORISM_CALL porism_error_line(void) { return err_line; }
+PORISM_API int PORISM_CALL porism_error_col(void) { return err_col; }
+PORISM_API size_t PORISM_CALL porism_output_len(void) { return outlen; }
+PORISM_API int PORISM_CALL porism_truncated(void) { return out_overflow; }
 
 
 static void begin_call(char *out, size_t cap) {
@@ -1376,7 +1376,7 @@ static void begin_call(char *out, size_t cap) {
     err_line = err_col = 0;
 }
 
-PORISM_API int porism_run(const char *src, char *out, size_t cap) {
+PORISM_API int PORISM_CALL porism_run(const char *src, char *out, size_t cap) {
     int rc;
     PORISM_LOCK();
     if (!src) {
@@ -1393,7 +1393,7 @@ PORISM_API int porism_run(const char *src, char *out, size_t cap) {
     return rc;
 }
 
-PORISM_API int porism_eval(const char *expr, const char **names, const double *vals,
+PORISM_API int PORISM_CALL porism_eval(const char *expr, const char **names, const double *vals,
                    int nvars, char *out, size_t cap) {
     int rc;
     PORISM_LOCK();
@@ -1420,9 +1420,9 @@ PORISM_API int porism_eval(const char *expr, const char **names, const double *v
     return rc;
 }
 
-PORISM_API const char *porism_error_type(void) { return err_type; }
+PORISM_API const char *PORISM_CALL porism_error_type(void) { return err_type; }
 
-PORISM_API int porism_run_json(const char *src, const char *params_json, char *out, size_t cap) {
+PORISM_API int PORISM_CALL porism_run_json(const char *src, const char *params_json, char *out, size_t cap) {
     int rc;
     PORISM_LOCK();
     begin_call(out, cap);
@@ -1457,7 +1457,6 @@ static char *readfile(const char *path) {
 int main(int argc, char **argv) {
     const char *file = 0, *code = 0, *params = 0;
     for (int i = 1; i < argc; i++) {
-        /// TODO: 为version添加返回值。
         // Version of Interpreter.
         if (!strcmp(argv[i], "--version") || !strcmp(argv[i], "-v")) {
             printf("Porism Interpreter v%s\n", PORISM_VERSION);
